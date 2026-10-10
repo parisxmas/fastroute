@@ -696,9 +696,17 @@ impl BasicBoard {
                     }
                     // the center must be in the copper on this layer as well (convex shape)
                     let index = layer - other.first_layer(self);
-                    let inside = self.tile_shape(other_key, index).is_some_and(|s| s.contains(&center) && s.contains(&end));
-                    if inside {
-                        bridges.push((end, center, layer, t.trace().half_width, t.net_numbers().to_vec(), t.clearance_class, t.fixed_state()));
+                    let Some(shape) = self.tile_shape(other_key, index) else { continue };
+                    if shape.contains(&center) && shape.contains(&end) {
+                        // The bridge stays inside the pad's copper: a capsule lies in a convex shape when
+                        // both its end discs do, so its half-width is at most the room round each end.
+                        // At the trace's own half-width a trace wider than the pad put new copper outside
+                        // it, within clearance of other nets (parisxmas/fastroute#3).
+                        let room = shape.border_distance(&center.to_float()).min(shape.border_distance(&end.to_float()));
+                        let half_width = t.trace().half_width.min(room.floor() as i32);
+                        if half_width > 0 {
+                            bridges.push((end, center, layer, half_width, t.net_numbers().to_vec(), t.clearance_class, t.fixed_state()));
+                        }
                         break;
                     }
                 }
