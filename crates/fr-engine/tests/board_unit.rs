@@ -147,3 +147,51 @@ fn crossing_traces_of_one_net_are_split() {
         assert!(item.first_corner() == center || item.last_corner() == center);
     }
 }
+
+/// A board whose padstack 0 is a through via of radius `r` (circle) on both layers.
+fn board_with_via(r: i32) -> (BasicBoard, fr_engine::ids::PadstackNo) {
+    let ls = LayerStructure::new(vec![Layer::new("F.Cu", true), Layer::new("B.Cu", true)]);
+    let matrix = ClearanceMatrix::get_default_instance(&ls, 200);
+    let mut rules = BoardRules::new(ls.clone(), matrix);
+    let class = rules.net_classes.append("default", &ls, false);
+    for name in ["a", "b", "c"] {
+        rules.nets.add(name, 1, false, class);
+    }
+    let mut padstacks = Padstacks::new(&ls);
+    let circle = ConvexShape::Circle(Circle::new(IntPoint::new(0, 0), r));
+    let ps = padstacks.add_unnamed(vec![Some(circle.clone()), Some(circle)]);
+    let comm = Communication::new(Unit::Mil, 1, Some(SpecctraParserInfo::default()), CoordinateTransform::new(1.0, 0.0, 0.0), ItemIdGenerator::new());
+    let outline = PolylineShape::Tile(TileShape::IntBox(IntBox::new(0, 0, 100_000, 100_000)));
+    let b = BasicBoard::new(
+        IntBox::new(-1000, -1000, 101_000, 101_000),
+        ls,
+        vec![outline],
+        1,
+        rules,
+        BoardLibrary::new(padstacks, Packages::new()),
+        Components::new(),
+        comm,
+    );
+    (b, ps)
+}
+
+/// bridge_trace_ends_to_drill_centers joins a trace end that lies inside a same-net via (off its
+/// centre) to the centre. Inserted at the trace's full half-width, the bridge left the via's copper
+/// when the trace was wider than the via, and came within clearance of another net that the
+/// original copper kept clear of (parisxmas/fastroute#3). The bridge must stay inside the via.
+#[test]
+fn bridge_into_a_small_via_stays_clear_of_other_nets() {
+    use fr_engine::drc::clearance_violation::clearance_violation_count;
+    let (mut b, ps) = board_with_via(300);
+    // net a: a via of radius 300 at (10000, 10000), and a 800-wide trace ending 200 off its centre
+    b.insert_via(ps, Point::Int(IntPoint::new(10_000, 10_000)), &[1], 1, FixedState::Unfixed, true);
+    let wide = Polyline::from_int_points(&[IntPoint::new(15_000, 10_000), IntPoint::new(10_200, 10_000)]);
+    b.insert_trace_without_cleaning(wide, 0, 400, &[1], 1, FixedState::Unfixed).unwrap();
+    // net b: a 200-wide trace at x = 9350, its edge at 9450. Nearest net-a copper before bridging:
+    // the via's edge at 9700 (250 away, clearance 200); a full-width bridge would reach 9600 (150).
+    let other = segment(&mut b, 9350, 5_000, 9350, 15_000, 2);
+    assert_eq!(clearance_violation_count(&b, other), 0, "the fixture must start clean");
+    let n = b.bridge_trace_ends_to_drill_centers();
+    assert_eq!(n, 1, "the off-centre trace end is bridged");
+    assert_eq!(clearance_violation_count(&b, other), 0, "the bridge left the via's copper");
+}
