@@ -20,7 +20,7 @@
 use crate::board::{ItemKey, RoutingBoard};
 use crate::drc::clearance_violation::clearance_violation_count;
 use crate::ids::{FixedState, LayerNo, NetNo};
-use fr_geom::{FloatPoint, IntPoint, Point, Polyline};
+use fr_geom::{FloatPoint, IntPoint, Line, Point, Polyline};
 
 /// Extra half width of the clearance check of a meander, micrometres.
 const TUNING_SAFETY_MARGIN_UM: f64 = 5.0;
@@ -270,7 +270,36 @@ fn try_meander(board: &RoutingBoard, key: ItemKey, seg: usize, need: f64, max_am
     if item.fixed_state() >= FixedState::SystemFixed || item.component_no() > 0 {
         return None;
     }
-    let corners = t.polyline().corners();
+    let (polyline, added) = meander_polyline(t.polyline(), seg, need, max_amp, pitch, side)?;
+
+    let mut next = board.clone();
+    let (layer, half_width, nets, class, fixed) =
+        (t.layer(), t.half_width(), item.net_numbers().to_vec(), item.clearance_class(), item.fixed_state());
+    let old = next.get_item(item.id())?;
+    if next.item(old).is_user_fixed() {
+        next.items.get_mut(old).set_fixed_state(FixedState::Unfixed);
+    }
+    next.remove_item(old);
+    if next.get_item(item.id()).is_some() {
+        return None; // not removed: never leave the old and the new trace on top of each other
+    }
+    // The check uses a slightly wider trace: KiCad measures the exact 45-degree geometry and
+    // finds micrometre violations the integer checks here miss (the router keeps the same
+    // safety margin when it routes).
+    let mut probe = next.clone();
+    let margin = (TUNING_SAFETY_MARGIN_UM * next.communication.resolution.max(1) as f64).round() as i32;
+    let probe_key = probe.insert_trace_without_cleaning(polyline.clone(), layer, half_width + margin, &nets, class, fixed)?;
+    if clearance_violation_count(&probe, probe_key) > 0 {
+        return None;
+    }
+    next.insert_trace_without_cleaning(polyline, layer, half_width, &nets, class, fixed)?;
+    Some((next, added))
+}
+
+/// The serpentine replacing segment `seg` of `polyline` (between corners `seg` and `seg + 1`),
+/// adding up to `need`; returns the new polyline and the added length.
+fn meander_polyline(polyline: &Polyline, seg: usize, need: f64, max_amp: f64, pitch: f64, side: Side) -> Option<(Polyline, f64)> {
+    let corners = polyline.corners();
     let (a, b) = (&corners[seg], &corners[seg + 1]);
     let (Point::Int(pa), Point::Int(pb)) = (a, b) else { return None };
     let (dx, dy) = ((pb.x - pa.x) as i64, (pb.y - pa.y) as i64);
@@ -300,7 +329,8 @@ fn try_meander(board: &RoutingBoard, key: ItemKey, seg: usize, need: f64, max_am
     // centre the bumps on the segment
     let used = (2 * k - 1) * pitch_steps;
     let start = (steps - used) / 2;
-    let mut pts: Vec<Point> = corners[..=seg].to_vec();
+    // the meander's own corners, from corner seg to corner seg + 1 (all IntPoints)
+    let mut pts: Vec<Point> = vec![a.clone()];
     let at = |s: i64, o: i64| Point::Int(IntPoint::new((pa.x as i64 + ex * s + nx * o) as i32, (pa.y as i64 + ey * s + ny * o) as i32));
     let mut s = start;
     for i in 0..k {
@@ -322,37 +352,80 @@ fn try_meander(board: &RoutingBoard, key: ItemKey, seg: usize, need: f64, max_am
         pts.push(at(s + pitch_steps, 0));
         s += 2 * pitch_steps;
     }
-    pts.extend_from_slice(&corners[seg + 1..]);
+    pts.push(b.clone());
     let added = 2.0 * (k * amp_steps) as f64 * step_len;
-
-    let mut next = board.clone();
-    let (layer, half_width, nets, class, fixed) =
-        (t.layer(), t.half_width(), item.net_numbers().to_vec(), item.clearance_class(), item.fixed_state());
-    let old = next.get_item(item.id())?;
-    if next.item(old).is_user_fixed() {
-        next.items.get_mut(old).set_fixed_state(FixedState::Unfixed);
+    // Splice lines, not corners: corner i is lines[i] x lines[i + 1], so the segment is
+    // lines[seg + 1]. The trace's other corners may be RationalPoints (intersections of
+    // any-angle lines); rebuilding the trace from its corners drew lines through them, and
+    // Line::intersection_approx, which requires IntPoint ends as in Freerouting, panicked.
+    let mut lines: Vec<Line> = polyline.lines[..=seg].to_vec();
+    for w in pts.windows(2) {
+        if w[0] != w[1] {
+            lines.push(Line::new(w[0].clone(), w[1].clone()));
+        }
     }
-    next.remove_item(old);
-    if next.get_item(item.id()).is_some() {
-        return None; // not removed: never leave the old and the new trace on top of each other
-    }
-    // The check uses a slightly wider trace: KiCad measures the exact 45-degree geometry and
-    // finds micrometre violations the integer checks here miss (the router keeps the same
-    // safety margin when it routes).
-    let polyline = Polyline::from_points(&pts);
-    let mut probe = next.clone();
-    let margin = (TUNING_SAFETY_MARGIN_UM * next.communication.resolution.max(1) as f64).round() as i32;
-    let probe_key = probe.insert_trace_without_cleaning(polyline.clone(), layer, half_width + margin, &nets, class, fixed)?;
-    if clearance_violation_count(&probe, probe_key) > 0 {
-        return None;
-    }
-    next.insert_trace_without_cleaning(polyline, layer, half_width, &nets, class, fixed)?;
-    Some((next, added))
+    lines.extend_from_slice(&polyline.lines[seg + 2..]);
+    Some((Polyline::from_lines(lines), added))
 }
 
 #[cfg(test)]
 mod tests {
-    use super::glob_match;
+    use super::{glob_match, meander_polyline, Side};
+    use fr_geom::{Line, Point, Polyline};
+
+    /// A trace whose segment 0 (corners (0,0) -> (1000,0)) can take a meander, and whose
+    /// corner 3 is the intersection of a slope-2 and a slope-1/3 line: x = 2370.6, rational.
+    fn trace_with_rational_corner() -> Polyline {
+        Polyline::from_lines(vec![
+            Line::new_ints(0, -10, 0, 10),       // start cap, x = 0
+            Line::new_ints(0, 0, 1000, 0),       // y = 0
+            Line::new_ints(1000, 0, 1000, 10),   // x = 1000
+            Line::new_ints(1000, 50, 1001, 52),  // slope 2 through (1000, 50)
+            Line::new_ints(0, 2001, 3, 2002),    // slope 1/3
+            Line::new_ints(3000, 0, 3000, 1),    // end cap, x = 3000
+        ])
+    }
+
+    #[test]
+    fn meander_on_an_all_integer_trace_is_unchanged_by_the_splice() {
+        // what try_meander built before the fix: the polyline through every corner
+        let pl = Polyline::from_lines(vec![
+            Line::new_ints(0, -10, 0, 10),
+            Line::new_ints(0, 0, 1000, 0),
+            Line::new_ints(1000, 0, 1000, 10),
+            Line::new_ints(0, 600, 10, 600),
+            Line::new_ints(1500, 0, 1500, 1),
+        ]);
+        for side in [Side::Left, Side::Right, Side::Alternate] {
+            let (m, added) = meander_polyline(&pl, 0, 350.0, 100.0, 100.0, side).expect("a meander fits");
+            let c = pl.corners();
+            let (mut pts, _) = (c[..1].to_vec(), ());
+            let mc = m.corners();
+            // the old construction: original corners up to seg, the meander's, the rest
+            pts.extend(mc[1..mc.len() - (c.len() - 2)].iter().cloned());
+            pts.extend(c[1..].iter().cloned());
+            assert_eq!(Polyline::from_points(&pts).corners(), mc, "{side:?}");
+            assert!(added > 0.0);
+        }
+    }
+
+    #[test]
+    fn meander_beside_a_rational_corner() {
+        let pl = trace_with_rational_corner();
+        let corners = pl.corners();
+        assert!(matches!(corners[0], Point::Int(_)) && matches!(corners[1], Point::Int(_)));
+        assert!(!matches!(corners[3], Point::Int(_)), "the fixture needs a rational corner");
+        let (m, added) = meander_polyline(&pl, 0, 200.0, 100.0, 100.0, Side::Left).expect("a meander fits");
+        // inserting a trace builds its offset shapes: this panicked with
+        // "ClassCastException: RationalPoint is not an IntPoint" (fr-geom point.rs)
+        let _ = m.offset_shapes(5);
+        assert_eq!(added, 200.0);
+        // the rest of the trace is unchanged: same ends, same rational corner
+        let mc = m.corners();
+        assert_eq!(mc.first(), corners.first());
+        assert_eq!(mc.last(), corners.last());
+        assert!(mc.contains(&corners[3]));
+    }
 
     #[test]
     fn globs() {
