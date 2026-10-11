@@ -43,6 +43,16 @@ pub struct BoardRules {
     pin_edge_to_turn_dist: f64,
     use_slow_autoroute_algorithm: bool,
     hole_clearance: i32,
+    /// Minimum drill-to-drill gap of two vias of the same net, in board units (fastroute extension;
+    /// `router.same_net_via_hole_to_hole_um`). None: such pairs are judged by the copper clearance.
+    same_net_via_hole_to_hole: Option<f64>,
+    /// (net class name, box in board units, base clearance in board units): fastroute extension
+    /// (`router.clearance_exempt_areas`), used by the clearance check only.
+    pub clearance_exempt_areas: Vec<(String, fr_geom::IntBox, f64)>,
+    /// fastroute fixes to the clearance report, false on a bare board (Java behaviour); the CLI turns
+    /// them on with its enhancements (off only with --parity / --no-enhancements).
+    pub exact_clearance_check: bool,
+    pub skip_same_component_pin_pairs: bool,
     /// DRC clearance tolerance in micrometers (transient in Java, default 1.0).
     pub clearance_tolerance_um: f64,
 }
@@ -68,6 +78,10 @@ impl BoardRules {
             pin_edge_to_turn_dist: 0.0,
             use_slow_autoroute_algorithm: false,
             hole_clearance: 0,
+            same_net_via_hole_to_hole: None,
+            clearance_exempt_areas: Vec::new(),
+            exact_clearance_check: false,
+            skip_same_component_pin_pairs: false,
             clearance_tolerance_um: 1.0,
         }
     }
@@ -125,6 +139,14 @@ impl BoardRules {
 
     pub fn set_hole_clearance(&mut self, value: i32) {
         self.hole_clearance = value.max(0);
+    }
+
+    pub fn get_same_net_via_hole_to_hole(&self) -> Option<f64> {
+        self.same_net_via_hole_to_hole
+    }
+
+    pub fn set_same_net_via_hole_to_hole(&mut self, value: Option<f64>) {
+        self.same_net_via_hole_to_hole = value.map(|v| v.max(0.0));
     }
 
     /// Changes the default trace half width on `layer` and updates the min/max.

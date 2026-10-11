@@ -149,6 +149,8 @@ const ROUTER_FIELDS: &[FieldDesc] = &[
     ("fanout", &["fanout"]),
     ("copperToEdgeClearanceUm", &["copper_to_edge_clearance_um"]),
     ("holeClearanceUm", &["hole_clearance_um"]),
+    ("sameNetViaHoleToHoleUm", &["same_net_via_hole_to_hole_um"]),
+    ("clearanceExemptAreas", &["clearance_exempt_areas"]),
     ("clearanceToleranceUm", &["clearance_tolerance_um"]),
     ("planeNets", &["plane_nets"]),
     (
@@ -216,6 +218,8 @@ fn set_router(s: &mut RouterSettings, path: &[&str], v: &str) -> R {
     match f {
         "copperToEdgeClearanceUm" => set_f64(&mut s.copper_to_edge_clearance_um, f, v),
         "holeClearanceUm" => set_f64(&mut s.hole_clearance_um, f, v),
+        "sameNetViaHoleToHoleUm" => set_f64(&mut s.same_net_via_hole_to_hole_um, f, v),
+        "clearanceExemptAreas" => set_strings(&mut s.clearance_exempt_areas, v),
         "clearanceToleranceUm" => set_f64(&mut s.clearance_tolerance_um, f, v),
         "planeNets" => set_strings(&mut s.plane_nets, v),
         "planeAsObstacle" => set_bool(&mut s.plane_as_obstacle, v),
