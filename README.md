@@ -38,6 +38,8 @@ measurements and the reasoning for each change: [docs/IMPROVEMENTS.md](docs/IMPR
 | A failing connection rips its whole net on every failure from the second on; unroutable connections make large nets (GND, 3V3) oscillate | Only once per net |
 | Class-pair clearances from the DSN only reach the clearance classes named after the net classes, not the pin/SMD classes of the same nets | Applied to all item classes of both net classes |
 | Nets with a pad on or outside the board edge (edge connectors, castellated pads, headers across Edge.Cuts) ignore the outline completely, so their traces can run outside the board anywhere | The area outside the outline is a keepout except right around those pads |
+| Clearance violations are measured between the bounding octagons of round copper (vias, trace ends), which reach up to 8.2 % of a radius past the circle: copper that is clear is reported as a violation | A reported shortfall is re-measured on the true geometry (vias as circles, trace segments as capsules) |
+| Two pads of one footprint are reported as a clearance violation (a USB-C receptacle's GND and VBUS pads at 0.10 mm) | A footprint's own pads are not judged against each other |
 | DSN lexer: non-ASCII letters dropped from names, desynchronisation on some quoted strings, a pin token swallowing a character of the next pin | Parsed correctly |
 
 ### Routing and optimizer improvements
@@ -69,6 +71,10 @@ measurements and the reasoning for each change: [docs/IMPROVEMENTS.md](docs/IMPR
   meanders after routing; every meander is clearance-checked, via heights count as in KiCad.
 - **Controlled impedance**: trace widths per layer from the board stackup (microstrip,
   stripline, differential), no neck-down for those classes (`--no-neckdown-classes`).
+- **KiCad-equivalent clearance rules the DSN cannot state** (options): two vias of one net judged
+  by their drill-to-drill gap (`router.same_net_via_hole_to_hole_um`), and areas where a net
+  class's class-pair clearances do not apply, as KiCad's rule areas scope a rule
+  (`router.clearance_exempt_areas`, "CLASS@x0:y0:x1:y1@base_um" in DSN units). Report only.
 - **Differential pairs** (`--pairs`): pairs are routed first with the second net following
   the first at the pair gap, held while the rest of the board is routed; afterwards the
   shorter net gets meanders until the two lengths match (`--pair-skew`, default 0.1 mm).
