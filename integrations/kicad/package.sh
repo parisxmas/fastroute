@@ -5,7 +5,8 @@
 #   Without --bin, the fastroute binary for the current platform is built
 #   (release, or PGO with --pgo) and bundled as plugins/bin/<platform>/.
 #   --bin may be repeated to bundle prebuilt binaries for more platforms
-#   (platform tags: macos-arm64, macos-x64, linux-x64, linux-arm64, windows-x64).
+#   (platform tags: macos-arm64, macos-x64, linux-x64, linux-arm64, windows-x64,
+#   windows-arm64).
 # Output: dist/fastroute-kicad-<version>.zip (install via PCM "Install from File").
 set -eu
 HERE=$(cd "$(dirname "$0")" && pwd)
