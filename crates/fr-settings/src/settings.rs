@@ -184,6 +184,15 @@ pub struct RouterSettings {
     pub fanout: FanoutSettings,
     pub copper_to_edge_clearance_um: Option<f64>,
     pub hole_clearance_um: Option<f64>,
+    /// fastroute extension (not in Freerouting): the minimum drill-to-drill gap between two vias of the
+    /// SAME net. When set, the clearance check judges a same-net via pair by this (the fab rule for
+    /// same-net vias) instead of the copper clearance between different nets; routing is unchanged.
+    pub same_net_via_hole_to_hole_um: Option<f64>,
+    /// fastroute extension: areas where a net class's class-pair clearances do not apply, as KiCad's rule
+    /// areas scope a rule ("not inside the USB pin field"). Entries "CLASS@x0:y0:x1:y1@base_um", the box in
+    /// DSN units: a pair with an item of CLASS whose shape touches the box is held to base_um instead.
+    /// Clearance check only; routing is unchanged.
+    pub clearance_exempt_areas: Option<Vec<String>>,
     pub clearance_tolerance_um: Option<f64>,
     pub plane_nets: Option<Vec<String>>,
     pub plane_as_obstacle: Option<bool>,
@@ -423,6 +432,8 @@ impl RouterSettings {
         n += self.fanout.copy_fields_from(&s.fanout);
         copy(&mut self.copper_to_edge_clearance_um, &s.copper_to_edge_clearance_um, &mut n);
         copy(&mut self.hole_clearance_um, &s.hole_clearance_um, &mut n);
+        copy(&mut self.same_net_via_hole_to_hole_um, &s.same_net_via_hole_to_hole_um, &mut n);
+        copy(&mut self.clearance_exempt_areas, &s.clearance_exempt_areas, &mut n);
         copy(&mut self.clearance_tolerance_um, &s.clearance_tolerance_um, &mut n);
         copy(&mut self.plane_nets, &s.plane_nets, &mut n);
         copy(&mut self.plane_as_obstacle, &s.plane_as_obstacle, &mut n);

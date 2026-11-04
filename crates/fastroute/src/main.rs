@@ -407,6 +407,11 @@ fn run() -> Result<(), String> {
     let t = Instant::now();
     let mut board = fr_io::post_load::load_from_specctra_dsn(&data, &mut settings).map_err(|e| format!("{path}: {e:?}"))?;
     if !args.parity && !args.no_enhancements {
+        // clearance-report fixes (docs/IMPROVEMENTS.md): exact shapes instead of bounding octagons,
+        // a footprint's own pads not judged against each other
+        let rules = board.rules_mut();
+        rules.exact_clearance_check = true;
+        rules.skip_same_component_pin_pairs = true;
         let n = fr_io::network::extend_class_pair_clearances(&mut board, &dsn);
         if n > 0 {
             log::info!(target: "fastroute", "class-pair clearances applied to {n} pin/SMD clearance class pairs as well");

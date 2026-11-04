@@ -193,6 +193,42 @@ fn item_clearance_violations(board: &BasicBoard, key: ItemKey, smallest_clearanc
             if !is_obstacle {
                 continue;
             }
+            // fastroute extension: two pads of one component are the part's own geometry, which no router
+            // moves (a USB-C receptacle's GND and VBUS pads sit 0.10 mm apart by design)
+            if board.rules.skip_same_component_pin_pairs && this.is_pin() && other.is_pin() && this.component_no > 0
+                && this.component_no == other.component_no {
+                continue;
+            }
+            // fastroute extension: two vias of ONE net are held to the fab's drill-to-drill rule, not to the
+            // copper clearance between different nets (which reported every via pair of a decoupling fanout
+            // at 0.45-0.6 mm pitch). Only when router.same_net_via_hole_to_hole_um is set.
+            if let (Some(hth), true, true) = (board.rules.get_same_net_via_hole_to_hole(), this.is_via(), other.is_via()) {
+                if other.shares_net(this) {
+                    let (pa, pb) = (this.padstack(board), other.padstack(board));
+                    if let (Some(pa), Some(pb)) = (pa, pb) {
+                        let (ca, cb) = (this.center(board), other.center(board));
+                        let gap = ca.to_float().distance(&cb.to_float()) - pa.get_drill_radius() - pb.get_drill_radius();
+                        if gap + 1e-6 >= hth {
+                            continue;
+                        }
+                        if let Some(shape2) = board.tile_shape(other_key, entry.shape_index) {
+                            let intersection = current_tile_shape.intersection(&shape2);
+                            if *smallest_clearance < 0.0 || gap < *smallest_clearance {
+                                *smallest_clearance = gap;
+                            }
+                            result.push(ClearanceViolation {
+                                first_item: key,
+                                second_item: other_key,
+                                shape: intersection,
+                                layer,
+                                expected_clearance: hth,
+                                actual_clearance: gap,
+                            });
+                        }
+                        continue;
+                    }
+                }
+            }
             // the two shapes the clearance is calculated between
             let shape1 = &current_tile_shape;
             let Some(shape2) = board.tile_shape(other_key, entry.shape_index) else {
@@ -220,7 +256,29 @@ fn item_clearance_violations(board: &BasicBoard, key: ItemKey, smallest_clearanc
             if intersection.dimension() != 2 {
                 continue;
             }
-            let actual_clearance = clearance_between_two_shapes(shape1, &shape2, minimum_clearance, cl_comp1, cl_comp2);
+            let mut actual_clearance = clearance_between_two_shapes(shape1, &shape2, minimum_clearance, cl_comp1, cl_comp2);
+            // fastroute extension: the tile shapes bound round copper by octagons, which read too close;
+            // re-measure a reported shortfall on the true geometry (drc::exact) before calling it one
+            if board.rules.exact_clearance_check && actual_clearance < minimum_clearance {
+                if let (Some(pa), Some(pb)) = (super::exact::prim(board, key, i), super::exact::prim(board, other_key, entry.shape_index)) {
+                    if let Some(g) = super::exact::gap(&pa, &pb) {
+                        actual_clearance = actual_clearance.max(g);
+                    }
+                }
+            }
+            // fastroute extension: inside an exempt area of one item's net class the class-pair clearance
+            // does not apply (KiCad's rule-area scoping, e.g. usb_spacing inside the USB pin field)
+            let mut minimum_clearance = minimum_clearance;
+            if !board.rules.clearance_exempt_areas.is_empty() {
+                let (b1, b2) = (shape1.bounding_box(), shape2.bounding_box());
+                let classes: Vec<String> = [this, other].iter().flat_map(|it| it.net_numbers().iter()
+                    .map(|&n| board.rules.net_class_of(n).get_name().to_string())).collect();
+                for (cls, bx, base) in &board.rules.clearance_exempt_areas {
+                    if classes.iter().any(|c| c == cls) && (b1.intersects_int_box(bx) || b2.intersects_int_box(bx)) {
+                        minimum_clearance = minimum_clearance.min(*base);
+                    }
+                }
+            }
             let shortfall = minimum_clearance - actual_clearance;
             let comm = &board.communication;
             let board_unit_to_um = Unit::scale(1.0, comm.unit, Unit::Um) / comm.resolution.max(1) as f64;

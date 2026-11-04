@@ -23,6 +23,7 @@
 pub mod checker;
 pub mod clearance_violation;
 pub mod net_incompletes;
+pub mod exact;
 
 pub use checker::{all_clearance_violations, DesignRulesChecker, UnconnectedItems};
 pub use clearance_violation::{

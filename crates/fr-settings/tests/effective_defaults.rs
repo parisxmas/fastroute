@@ -30,6 +30,8 @@ fn expected_defaults() -> RouterSettings {
         },
         copper_to_edge_clearance_um: Some(250.0),
         hole_clearance_um: Some(0.0),
+        same_net_via_hole_to_hole_um: None,
+        clearance_exempt_areas: None,
         clearance_tolerance_um: Some(1.0),
         plane_nets: Some(vec![]),
         plane_as_obstacle: Some(false),

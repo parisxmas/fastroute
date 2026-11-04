@@ -185,6 +185,46 @@ fn assign_hole_keepout_clearance_class(board: &mut BasicBoard, hole_clearance: i
     reclassified
 }
 
+/// fastroute extension: `router.same_net_via_hole_to_hole_um` into the board rules (clearance check only).
+pub fn apply_same_net_via_hole_to_hole(board: &mut BasicBoard, settings: &RouterSettings) {
+    let Some(um) = settings.same_net_via_hole_to_hole_um else {
+        return;
+    };
+    if um < 0.0 {
+        log::warn!(target: "fastroute", "Ignoring router.same_net_via_hole_to_hole_um because it is negative: {um}");
+        return;
+    }
+    let value = um_to_board_units(board, um) as f64;
+    board.rules_mut().set_same_net_via_hole_to_hole(Some(value));
+    log::info!(target: "fastroute", "same-net via pairs judged by hole-to-hole {um} um (clearance check)");
+}
+
+/// fastroute extension: `router.clearance_exempt_areas` ("CLASS@x0:y0:x1:y1@base_um", DSN units).
+pub fn apply_clearance_exempt_areas(board: &mut BasicBoard, settings: &RouterSettings) {
+    let Some(entries) = &settings.clearance_exempt_areas else {
+        return;
+    };
+    let mut out = Vec::new();
+    for e in entries {
+        let parts: Vec<&str> = e.split('@').collect();
+        let nums: Vec<f64> = parts.get(1).map(|b| b.split(':').filter_map(|x| x.parse().ok()).collect()).unwrap_or_default();
+        let base: Option<f64> = parts.get(2).and_then(|b| b.parse().ok());
+        if parts.len() != 3 || nums.len() != 4 || base.is_none() {
+            log::warn!(target: "fastroute", "Ignoring router.clearance_exempt_areas entry '{e}' (want CLASS@x0:y0:x1:y1@base_um)");
+            continue;
+        }
+        let ct = &board.communication.coordinate_transform;
+        let a = ct.dsn_to_board_point(&[nums[0], nums[1]]);
+        let b = ct.dsn_to_board_point(&[nums[2], nums[3]]);
+        let bx = fr_geom::IntBox::new(a.x.min(b.x).floor() as i32, a.y.min(b.y).floor() as i32,
+                                      a.x.max(b.x).ceil() as i32, a.y.max(b.y).ceil() as i32);
+        out.push((parts[0].to_string(), bx, um_to_board_units(board, base.unwrap()) as f64));
+    }
+    // target "fastroute": the default logger shows only its own targets, and a dropped entry must be seen
+    log::info!(target: "fastroute", "{} clearance exempt area(s) (clearance check)", out.len());
+    board.rules_mut().clearance_exempt_areas = out;
+}
+
 /// `HeadlessBoardManager.applyHoleClearanceOverride`.
 pub fn apply_hole_clearance_override(board: &mut BasicBoard, settings: &RouterSettings) {
     let Some(um) = settings.hole_clearance_um else {
@@ -266,6 +306,8 @@ pub fn apply_router_settings_for_loaded_board(
     apply_net_class_exclusions(board, settings);
     apply_copper_to_edge_clearance_override(board, settings);
     apply_hole_clearance_override(board, settings);
+    apply_same_net_via_hole_to_hole(board, settings);
+    apply_clearance_exempt_areas(board, settings);
     apply_plane_nets_override(board, settings);
     apply_plane_as_obstacle_override(board, settings);
     apply_clearance_tolerance_override(board, settings);
