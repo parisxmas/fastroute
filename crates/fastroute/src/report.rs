@@ -79,9 +79,6 @@ impl Units<'_> {
     }
 }
 
-/// The cause of a clearance violation (`ClearanceViolation.category`). `pin_to_pin` and
-/// `pin_to_outline_or_keepout` come from the footprints themselves: no routing change removes
-/// them. `fixed_route` sits on an item that was already placed when the run started.
 pub(crate) fn category_name(category: Category) -> &'static str {
     match category {
         Category::PinToPin => "pin_to_pin",
