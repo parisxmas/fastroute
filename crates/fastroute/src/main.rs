@@ -749,7 +749,11 @@ fn report_violations(board: &RoutingBoard) {
             -((b.ll.y + b.ur.y) as f64) / 2.0 / res / 1000.0,
             v.expected_clearance / res / 1000.0,
             v.actual_clearance / res / 1000.0,
-            if v.is_unfixable(board) { " (pre-existing, unfixable)" } else { "" },
+            if v.is_unfixable(board) {
+                format!(" (pre-existing, unfixable, {})", report::category_name(v.category(board)))
+            } else {
+                String::new()
+            },
             describe_item(board, v.first_item),
             describe_item(board, v.second_item)
         );

@@ -15,7 +15,7 @@
 use std::fmt::Write as _;
 
 use fr_engine::board::{AutorouteAttemptState, BasicBoard, ItemKey, ItemKind, RoutingBoard};
-use fr_engine::drc::{all_clearance_violations, DesignRulesChecker};
+use fr_engine::drc::{all_clearance_violations, Category, DesignRulesChecker};
 use fr_engine::scoring::statistics::BoardStatistics;
 use fr_settings::RouterSettings;
 
@@ -76,6 +76,16 @@ impl Units<'_> {
     }
     fn layer(&self, l: i32) -> String {
         json_str(&self.board.layer_structure.layers.get(l as usize).map(|x| x.name.clone()).unwrap_or_else(|| format!("L{l}")))
+    }
+}
+
+pub(crate) fn category_name(category: Category) -> &'static str {
+    match category {
+        Category::PinToPin => "pin_to_pin",
+        Category::PinToOutlineOrKeepout => "pin_to_outline_or_keepout",
+        Category::FixedRoute => "fixed_route",
+        Category::OtherUnfixable => "other_unfixable",
+        Category::PotentiallyFixable => "potentially_fixable",
     }
 }
 
@@ -227,13 +237,15 @@ pub fn write_report(
     for v in &violations {
         let b = v.shape.bounding_box();
         viol.push(format!(
-            "    {{\"layer\": {}, \"xy\": [{}, {}], \"clearance_mm\": {}, \"actual_mm\": {}, \"unfixable\": {}, \"first\": {}, \"second\": {}}}",
+            "    {{\"layer\": {}, \"xy\": [{}, {}], \"clearance_mm\": {}, \"actual_mm\": {}, \"unfixable\": {}, \"category\": {}, \"same_net\": {}, \"first\": {}, \"second\": {}}}",
             u.layer(v.layer),
             u.x((b.ll.x + b.ur.x) as f64 / 2.0),
             u.y((b.ll.y + b.ur.y) as f64 / 2.0),
             num(v.expected_clearance / u.per_mm),
             num(v.actual_clearance / u.per_mm),
             v.is_unfixable(basic),
+            json_str(category_name(v.category(basic))),
+            basic.item(v.first_item).shares_net(basic.item(v.second_item)),
             item_json(&u, v.first_item),
             item_json(&u, v.second_item),
         ));
