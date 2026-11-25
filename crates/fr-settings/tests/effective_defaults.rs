@@ -33,6 +33,7 @@ fn expected_defaults() -> RouterSettings {
         clearance_tolerance_um: Some(1.0),
         plane_nets: Some(vec![]),
         plane_as_obstacle: Some(false),
+        net_priority: Some(vec![]),
         neck_width_um: Some(0.0),
         min_trace_width_um: None,
         strict_drc: Some(false),

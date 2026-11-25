@@ -60,6 +60,7 @@ pub fn default_settings(available_processors: i32) -> RouterSettings {
     s.clearance_tolerance_um = Some(DEFAULT_CLEARANCE_TOLERANCE_UM);
     s.plane_nets = Some(Vec::new());
     s.plane_as_obstacle = Some(false);
+    s.net_priority = Some(Vec::new());
     s.neck_width_um = Some(DEFAULT_NECK_WIDTH_UM);
     s.strict_drc = Some(false);
 

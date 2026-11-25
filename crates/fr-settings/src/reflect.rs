@@ -151,6 +151,7 @@ const ROUTER_FIELDS: &[FieldDesc] = &[
     ("holeClearanceUm", &["hole_clearance_um"]),
     ("clearanceToleranceUm", &["clearance_tolerance_um"]),
     ("planeNets", &["plane_nets"]),
+    ("netPriority", &["net_priority"]),
     (
         "planeAsObstacle",
         &[
@@ -218,6 +219,7 @@ fn set_router(s: &mut RouterSettings, path: &[&str], v: &str) -> R {
         "holeClearanceUm" => set_f64(&mut s.hole_clearance_um, f, v),
         "clearanceToleranceUm" => set_f64(&mut s.clearance_tolerance_um, f, v),
         "planeNets" => set_strings(&mut s.plane_nets, v),
+        "netPriority" => set_strings(&mut s.net_priority, v),
         "planeAsObstacle" => set_bool(&mut s.plane_as_obstacle, v),
         "neckWidthUm" => set_f64(&mut s.neck_width_um, f, v),
         "minTraceWidthUm" => set_f64(&mut s.min_trace_width_um, f, v),
@@ -477,6 +479,7 @@ mod tests {
         set_field_value(&mut s, "routerScoring.version", "V1_LEGACY").unwrap();
         set_field_value(&mut s, "scoring.viaCosts", "80").unwrap();
         set_field_value(&mut s, "plane_nets", " GND , VCC ").unwrap();
+        set_field_value(&mut s, "netPriority", " CA0 , CA1 ").unwrap();
         set_field_value(&mut s, "conduction-is-obstacle", "1").unwrap_err();
         set_field_value(&mut s, "conduction_is_obstacle", "1").unwrap();
         set_field_value(&mut s, "layers.routable", "false,true").unwrap();
@@ -490,6 +493,7 @@ mod tests {
         assert_eq!(s.router_scoring.version, Some(RouterScoringVersion::V1Legacy));
         assert_eq!(s.scoring.via_costs, Some(80));
         assert_eq!(s.plane_nets, Some(vec!["GND".into(), "VCC".into()]));
+        assert_eq!(s.net_priority, Some(vec!["CA0".into(), "CA1".into()]));
         assert_eq!(s.plane_as_obstacle, Some(true));
         let layers = s.layers.unwrap();
         assert_eq!(layers.len(), 2);
