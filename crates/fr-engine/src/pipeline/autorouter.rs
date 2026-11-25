@@ -290,8 +290,36 @@ impl BatchAutorouter {
         board.item(key).net_numbers().iter().any(|&n| board.rules.nets.get(n).map(|n| n.contains_plane()).unwrap_or(false))
     }
 
+    /// Rank of the nets `names` in `priority` (net names, most critical first): the lowest rank
+    /// among them, or `usize::MAX` when none is listed.
+    fn rank_of_nets<'a>(names: impl Iterator<Item = &'a str>, priority: &[String]) -> usize {
+        names
+            .map(|name| priority.iter().position(|p| p == name).unwrap_or(usize::MAX))
+            .min()
+            .unwrap_or(usize::MAX)
+    }
+
+    /// Rank of `key` in `priority`: the lowest rank of its nets.
+    fn priority_rank(board: &RoutingBoard, key: ItemKey, priority: &[String]) -> usize {
+        let nets = &board.rules.nets;
+        let names = board
+            .item(key)
+            .net_numbers()
+            .iter()
+            .filter_map(|&n| nets.get(n))
+            .map(|net| net.name.as_str());
+        Self::rank_of_nets(names, priority)
+    }
+
+    /// Routes the nets listed in `priority` before the others, keeping the rest of the order.
+    fn apply_net_priority(board: &RoutingBoard, list: &mut Vec<ItemKey>, priority: &[String]) {
+        if !priority.is_empty() {
+            list.sort_by_key(|&k| Self::priority_rank(board, k, priority));
+        }
+    }
+
     /// Java `AutoroutePassRunner.reorderSingleThreadItems(list, passNo)`.
-    fn reorder_items(&self, board: &RoutingBoard, list: &mut Vec<ItemKey>, pass_no: i32) {
+    fn reorder_items(&self, board: &RoutingBoard, list: &mut Vec<ItemKey>, pass_no: i32, priority: &[String]) {
         let (mut plane_items, mut signal_items): (Vec<ItemKey>, Vec<ItemKey>) = (Vec::new(), Vec::new());
         for &k in list.iter() {
             if Self::is_plane_item(board, k) {
@@ -303,15 +331,17 @@ impl BatchAutorouter {
         if signal_items.is_empty() {
             return;
         }
+        let rank = |k: &ItemKey| Self::priority_rank(board, *k, priority);
         let sort_key = |k: &ItemKey| {
             let it = board.item(*k);
-            (if it.net_count() > 0 { it.net_number(0) } else { 0 }, it.id().0)
+            (rank(k), if it.net_count() > 0 { it.net_number(0) } else { 0 }, it.id().0)
         };
         if self.stagnation_count >= 2 {
             signal_items.sort_by_key(sort_key);
             let seed = (pass_no as i64).wrapping_mul(1000003).wrapping_add(board.rules.nets.max_net_number() as i64);
             let mut rnd = fr_jcompat::random::JavaRandom::new(seed);
             fr_jcompat::random::shuffle(&mut signal_items, &mut rnd);
+            signal_items.sort_by_key(rank);
             log::debug!(
                 "Pass #{pass_no}: applied deterministic permutation to {} signal items (stagnation count: {}).",
                 signal_items.len(),
@@ -369,8 +399,9 @@ impl BatchAutorouter {
         if items.is_empty() {
             return (false, PassCounters::default());
         }
+        let priority = settings.get_net_priority();
         if pass_no > 1 {
-            self.reorder_items(board, &mut items, pass_no);
+            self.reorder_items(board, &mut items, pass_no, &priority);
         } else if let Some(seed) = self.order_seed {
             let (plane, mut signal): (Vec<ItemKey>, Vec<ItemKey>) = items.iter().partition(|&&k| Self::is_plane_item(board, k));
             let mut rnd = fr_jcompat::random::JavaRandom::new(seed);
@@ -378,6 +409,8 @@ impl BatchAutorouter {
             items = plane;
             items.extend(signal);
         }
+        // Last, so that the shuffle of a first pass cannot undo the priority bands.
+        Self::apply_net_priority(board, &mut items, &priority);
         let params = self.params();
         let ids: Vec<ItemId> = items.iter().map(|&k| board.item(k).id()).collect();
         let mut c = PassCounters::default();
@@ -515,8 +548,9 @@ impl BatchAutorouter {
         if items.is_empty() {
             return (false, PassCounters::default());
         }
+        let priority = settings.get_net_priority();
         if pass_no > 1 {
-            self.reorder_items(board, &mut items, pass_no);
+            self.reorder_items(board, &mut items, pass_no, &priority);
         } else if let Some(seed) = self.order_seed {
             let (plane, mut signal): (Vec<ItemKey>, Vec<ItemKey>) = items.iter().partition(|&&k| Self::is_plane_item(board, k));
             let mut rnd = fr_jcompat::random::JavaRandom::new(seed);
@@ -524,6 +558,8 @@ impl BatchAutorouter {
             items = plane;
             items.extend(signal);
         }
+        // Last, so that the shuffle of a first pass cannot undo the priority bands.
+        Self::apply_net_priority(board, &mut items, &priority);
         let params = self.params();
         let threads = self.pass_threads;
         let window = threads * PARALLEL_WINDOW_PER_THREAD;
@@ -1255,4 +1291,91 @@ pub fn enforce_strict_drc(board: &mut RoutingBoard, route_net_no: NetNo, max_ite
         AutorouteAttemptState::Failed,
         format!("strict_drc: connection ripped because {n} new item(s) included clearance violations"),
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::BatchAutorouter;
+    use crate::board::{ItemKey, RoutingBoard};
+    use crate::datastructures::ItemIdGenerator;
+    use crate::ids::ItemId;
+    use crate::library::{BoardLibrary, Packages, Padstacks};
+    use crate::rules::{BoardRules, ClearanceMatrix};
+    use crate::structure::{
+        Communication, Components, CoordinateTransform, Layer, LayerStructure, SpecctraParserInfo, Unit,
+    };
+    use fr_geom::{IntBox, IntPoint, Polyline, PolylineShape, TileShape};
+
+    fn priority(names: &[&str]) -> Vec<String> {
+        names.iter().map(|s| s.to_string()).collect()
+    }
+
+    fn board() -> RoutingBoard {
+        let ls = LayerStructure::new(vec![Layer::new("F.Cu", true), Layer::new("B.Cu", true)]);
+        let matrix = ClearanceMatrix::get_default_instance(&ls, 200);
+        let mut rules = BoardRules::new(ls.clone(), matrix);
+        let class = rules.net_classes.append("default", &ls, false);
+        for name in ["A", "B", "C"] {
+            rules.nets.add(name, 1, false, class);
+        }
+        let padstacks = Padstacks::new(&ls);
+        let comm = Communication::new(
+            Unit::Mil,
+            1,
+            Some(SpecctraParserInfo::default()),
+            CoordinateTransform::new(1.0, 0.0, 0.0),
+            ItemIdGenerator::new(),
+        );
+        let outline = PolylineShape::Tile(TileShape::IntBox(IntBox::new(0, 0, 100_000, 100_000)));
+        RoutingBoard::new(
+            IntBox::new(-1000, -1000, 101_000, 101_000),
+            ls,
+            vec![outline],
+            1,
+            rules,
+            BoardLibrary::new(padstacks, Packages::new()),
+            Components::new(),
+            comm,
+        )
+    }
+
+    fn connection(board: &mut RoutingBoard, net: i32, x: i32) -> ItemKey {
+        let p = Polyline::from_int_points(&[IntPoint::new(x, 0), IntPoint::new(x, 10_000)]);
+        board
+            .insert_trace_without_cleaning(p, 0, 100, &[net], 1, crate::ids::FixedState::Unfixed)
+            .expect("trace")
+    }
+
+    fn net_numbers(board: &RoutingBoard, keys: &[ItemKey]) -> Vec<i32> {
+        keys.iter().map(|&k| board.item(k).net_number(0)).collect()
+    }
+
+    #[test]
+    fn net_priority_moves_listed_connections_first() {
+        let mut b = board();
+        let a = connection(&mut b, 1, 1000);
+        let bb = connection(&mut b, 2, 2000);
+        let c = connection(&mut b, 3, 3000);
+        let mut list = vec![a, bb, c];
+        BatchAutorouter::apply_net_priority(&b, &mut list, &[]);
+        assert_eq!(net_numbers(&b, &list), vec![1, 2, 3]);
+        BatchAutorouter::apply_net_priority(&b, &mut list, &priority(&["C"]));
+        assert_eq!(net_numbers(&b, &list), vec![3, 1, 2]);
+        // Listed nets keep the order of the list, and unlisted ones their relative order.
+        let mut list = vec![c, bb, a];
+        BatchAutorouter::apply_net_priority(&b, &mut list, &priority(&["A", "B"]));
+        assert_eq!(net_numbers(&b, &list), vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn net_priority_ranks_listed_nets_in_order() {
+        let p = priority(&["CLK", "RESET"]);
+        assert_eq!(BatchAutorouter::rank_of_nets(["CLK"].into_iter(), &p), 0);
+        assert_eq!(BatchAutorouter::rank_of_nets(["RESET"].into_iter(), &p), 1);
+        assert_eq!(BatchAutorouter::rank_of_nets(["DATA"].into_iter(), &p), usize::MAX);
+        // A connection carrying several nets takes the most critical of them.
+        assert_eq!(BatchAutorouter::rank_of_nets(["DATA", "RESET"].into_iter(), &p), 1);
+        // No list, no ranking.
+        assert_eq!(BatchAutorouter::rank_of_nets(["CLK"].into_iter(), &[]), usize::MAX);
+    }
 }

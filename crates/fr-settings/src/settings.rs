@@ -187,6 +187,10 @@ pub struct RouterSettings {
     pub clearance_tolerance_um: Option<f64>,
     pub plane_nets: Option<Vec<String>>,
     pub plane_as_obstacle: Option<bool>,
+    /// fastroute extension (not in Freerouting): net names in routing order, most
+    /// critical first. Connections of a listed net are routed before the others in
+    /// every pass; unlisted nets keep the default order. Empty = no priority.
+    pub net_priority: Option<Vec<String>>,
     pub neck_width_um: Option<f64>,
     /// fastroute extension (not in Freerouting): narrowest trace width the
     /// router may create by neck-down; 0/unset = no limit (Java behaviour).
@@ -426,6 +430,7 @@ impl RouterSettings {
         copy(&mut self.clearance_tolerance_um, &s.clearance_tolerance_um, &mut n);
         copy(&mut self.plane_nets, &s.plane_nets, &mut n);
         copy(&mut self.plane_as_obstacle, &s.plane_as_obstacle, &mut n);
+        copy(&mut self.net_priority, &s.net_priority, &mut n);
         copy(&mut self.neck_width_um, &s.neck_width_um, &mut n);
         copy(&mut self.min_trace_width_um, &s.min_trace_width_um, &mut n);
         copy(&mut self.strict_drc, &s.strict_drc, &mut n);
@@ -586,6 +591,10 @@ impl RouterSettings {
 
     pub fn get_plane_nets(&self) -> Vec<String> {
         self.plane_nets.clone().unwrap_or_default()
+    }
+
+    pub fn get_net_priority(&self) -> Vec<String> {
+        self.net_priority.clone().unwrap_or_default()
     }
 
     pub fn is_plane_as_obstacle(&self) -> bool {
