@@ -1,0 +1,22 @@
+(pcb synth_net_clearance.dsn
+  (resolution um 10)
+  (unit um)
+  (structure
+    (layer F.Cu (type signal))
+    (layer B.Cu (type signal))
+    (boundary (path pcb 0 0 0 50000 0 50000 40000 0 40000 0 0))
+    (rule (width 200) (clearance 200))
+  )
+  (library
+    (image P2 (pin P 1 -500 0) (pin P 2 500 0))
+    (padstack P (shape (rect F.Cu -200 -200 200 200)) (shape (rect B.Cu -200 -200 200 200)))
+  )
+  (network
+    (net A (pins U1-1 U2-1))
+    (net B (pins U1-2 U2-2) (rule (clearance 600)))
+    (net C (pins U3-1 U3-2) (rule (clearance 400) (width 300)))
+  )
+  (placement
+    (component P2 (place U1 10000 10000 front 0) (place U2 30000 30000 front 0) (place U3 20000 20000 front 0))
+  )
+)

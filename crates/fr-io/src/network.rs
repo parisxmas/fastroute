@@ -400,6 +400,7 @@ impl Loader<'_> {
             }
             self.netlist.set_pins(&id, pin_list);
             if !net.rules.is_empty() {
+                let mut ignored_rules = Vec::new();
                 let board = self.board()?;
                 let Some(board_net) = board.rules.nets.get_by_name(&net.name, subnet) else {
                     log::warn!("Network.read_net_scope: board net not found");
@@ -428,9 +429,18 @@ impl Loader<'_> {
                                 .set_class(class);
                         }
                         Rule::Clearance { .. } => {
-                            log::warn!("Network.read_net_scope: Rule not yet implemented")
+                            // Applying it needs a class of the net's own (a clearance lives on
+                            // the net class), which changes the clearance class numbering the
+                            // reference loader produces, so it stays dropped as there.
+                            ignored_rules.push(format!(
+                                "Network.read_net_scope: clearance rule of net '{}' not applied; give the net its own class",
+                                net.name
+                            ));
                         }
                     }
+                }
+                for msg in ignored_rules {
+                    self.warn(msg);
                 }
             }
             subnet = subnet.wrapping_add(1);
